@@ -4,6 +4,7 @@ import {
   ListChecks, AlertTriangle, ClipboardCheck, Users, MessageSquare,
   TrendingUp, FolderOpen, UserCircle, Settings,
 } from "lucide-react";
+import logoIcon from "./logo-icon.png";
 
 // One source of truth for navigation — each item maps to a view key used
 // by App.jsx to decide which module component to render.
@@ -27,8 +28,9 @@ export const NAV = [
 export default function Sidebar({ view, setView }) {
   return (
     <div className="w-52 bg-[#0B1B33] text-gray-300 flex flex-col shrink-0">
-      <div className="px-4 py-4 text-white font-medium text-base border-b border-white/10">
-        OMSF Field
+      <div className="px-4 py-4 flex items-center gap-2.5 border-b border-white/10">
+        <img src={logoIcon} alt="OMSF Field" className="w-8 h-8 rounded-md object-cover" />
+        <span className="text-white font-medium text-base leading-tight">OMSF Field</span>
       </div>
       <nav className="flex-1 py-2 overflow-y-auto">
         {NAV.map((item) => {
