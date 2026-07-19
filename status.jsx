@@ -10,6 +10,7 @@ export const STATUS = {
   delayed:      { label: "Delayed",      dot: "bg-red-500",     chip: "bg-red-50 text-red-700 border-red-200",          bar: "bg-red-100 text-red-800 border-red-300",          fill: "#fee2e2", stroke: "#ef4444" },
   blocked:      { label: "Blocked",      dot: "bg-gray-400",    chip: "bg-gray-100 text-gray-600 border-gray-200",      bar: "bg-gray-100 text-gray-500 border-gray-300",       fill: "#f3f4f6", stroke: "#9ca3af" },
   not_started:  { label: "Not Started",  chip: "bg-gray-100 text-gray-500 border-gray-200" },
+  cancelled:    { label: "Cancelled",    chip: "bg-red-50 text-red-700 border-red-200" },
   not_planned:  { label: "Not planned",  chip: "bg-white text-gray-400 border-gray-200",         fill: "#ffffff", stroke: "#e5e7eb" },
 };
 
