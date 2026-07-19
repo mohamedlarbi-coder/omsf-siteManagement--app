@@ -2,9 +2,10 @@ import React from "react";
 import {
   LayoutDashboard, CalendarClock, LayoutGrid, FileText, ClipboardList,
   ListChecks, AlertTriangle, ClipboardCheck, Users, MessageSquare,
-  TrendingUp, FolderOpen, UserCircle, Settings,
+  TrendingUp, FolderOpen, UserCircle, Settings, LogOut,
 } from "lucide-react";
 import logoIcon from "./logo-icon.png";
+import { supabase } from "./supabaseClient.js";
 
 // One source of truth for navigation — each item maps to a view key used
 // by App.jsx to decide which module component to render.
@@ -25,7 +26,9 @@ export const NAV = [
   { key: "settings",    icon: Settings,        label: "Settings" },
 ];
 
-export default function Sidebar({ view, setView }) {
+export default function Sidebar({ view, setView, user }) {
+  const displayName = user?.user_metadata?.full_name || user?.email || "Signed in";
+
   return (
     <div className="w-52 bg-[#0B1B33] text-gray-300 flex flex-col shrink-0">
       <div className="px-4 py-4 flex items-center gap-2.5 border-b border-white/10">
@@ -49,6 +52,14 @@ export default function Sidebar({ view, setView }) {
           );
         })}
       </nav>
+      {user && (
+        <div className="px-4 py-3 border-t border-white/10 flex items-center justify-between gap-2">
+          <span className="text-xs text-gray-300 truncate" title={displayName}>{displayName}</span>
+          <button onClick={() => supabase?.auth.signOut()} title="Sign out" className="shrink-0 text-gray-400 hover:text-white">
+            <LogOut size={14} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
