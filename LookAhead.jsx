@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Download } from "lucide-react";
+import { Download, ChevronLeft, ChevronRight } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE } from "./schedule.js";
 
@@ -13,65 +13,94 @@ import { REAL_SCHEDULE } from "./schedule.js";
 const PROJECT_START = "2026-07-06";
 const TODAY_OFFSET = 12; // 2026-07-18, per the current conversation date
 
+const WINDOW_OPTIONS = [
+  { value: "1", label: "1 Week", days: 7 },
+  { value: "2", label: "2 Weeks", days: 14 },
+  { value: "3", label: "3 Weeks", days: 21 },
+  { value: "4", label: "4 Weeks", days: 28 },
+  { value: "full", label: "Full Schedule", days: null },
+];
+
 const DAY_WIDTH = 15; // px per day in the Gantt timeline
 const TOTAL_DAYS = Math.max(...REAL_SCHEDULE.map((t) => t.offset + t.span)) + 3;
 
-// Week tick marks along the top of the timeline, every 7 days from PROJECT_START.
-function buildWeekTicks() {
-  const start = new Date(PROJECT_START + "T00:00:00");
+function offsetToLabel(offset) {
+  const dt = new Date(PROJECT_START + "T00:00:00");
+  dt.setDate(dt.getDate() + offset);
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// Week tick marks along the top of the timeline, every 7 days from a given start.
+function buildWeekTicks(rangeStart, rangeDays) {
   const ticks = [];
-  for (let d = 0; d <= TOTAL_DAYS; d += 7) {
-    const dt = new Date(start);
-    dt.setDate(dt.getDate() + d);
-    ticks.push({ offset: d, label: dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }) });
+  for (let d = 0; d <= rangeDays; d += 7) {
+    ticks.push({ offset: d, label: offsetToLabel(rangeStart + d) });
   }
   return ticks;
 }
-const WEEK_TICKS = buildWeekTicks();
 
-function useScheduleRows(filterArea) {
+function useScheduleRows(tasks) {
   return useMemo(() => {
-    const filtered = filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea);
-    // Build ordered groups: Area > Group, preserving first-seen order.
     const groupOrder = [];
     const byGroup = {};
-    filtered.forEach((t) => {
+    tasks.forEach((t) => {
       const key = `${t.area}__${t.group}`;
       if (!byGroup[key]) { byGroup[key] = { area: t.area, group: t.group, tasks: [] }; groupOrder.push(key); }
       byGroup[key].tasks.push(t);
     });
     return groupOrder.map((k) => byGroup[k]);
-  }, [filterArea]);
+  }, [tasks]);
 }
 
 function LookAheadContent() {
   const [filterArea, setFilterArea] = useState("all");
   const [tab, setTab] = useState("Gantt");
   const [hovered, setHovered] = useState(null);
+  const [windowChoice, setWindowChoice] = useState("4"); // "1".."4" or "full"
+  const activeWindow = WINDOW_OPTIONS.find((w) => w.value === windowChoice);
+  const isFull = windowChoice === "full";
+  // windowStart snaps to the Monday of the current week so the view always
+  // starts on a clean week boundary rather than mid-week on "today".
+  const [windowStart, setWindowStart] = useState(TODAY_OFFSET - (TODAY_OFFSET % 7));
+
   const areas = useMemo(() => [...new Set(REAL_SCHEDULE.map((t) => t.area))].sort(), []);
-  const groups = useScheduleRows(filterArea);
-  const listData = useMemo(
-    () => (filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea))
-      .slice().sort((a, b) => a.offset - b.offset),
+
+  const byArea = useMemo(
+    () => (filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea)),
     [filterArea]
   );
 
-  const counts = useMemo(() => {
-    const src = filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea);
-    return {
-      total: src.length,
-      completed: src.filter((t) => t.status === "completed").length,
-      inProgress: src.filter((t) => t.status === "in_progress").length,
-      planned: src.filter((t) => t.status === "planned").length,
-    };
-  }, [filterArea]);
+  const rangeStart = isFull ? 0 : windowStart;
+  const rangeDays = isFull ? TOTAL_DAYS : activeWindow.days;
+
+  // A task is "in range" if its [start, end) span overlaps the visible window.
+  const visibleTasks = useMemo(() => {
+    if (isFull) return byArea;
+    const rangeEnd = windowStart + rangeDays;
+    return byArea.filter((t) => t.offset < rangeEnd && t.offset + t.span > windowStart);
+  }, [byArea, isFull, windowStart, rangeDays]);
+
+  const groups = useScheduleRows(visibleTasks);
+  const listData = useMemo(() => visibleTasks.slice().sort((a, b) => a.offset - b.offset), [visibleTasks]);
+  const weekTicks = useMemo(() => buildWeekTicks(rangeStart, rangeDays), [rangeStart, rangeDays]);
+
+  const counts = useMemo(() => ({
+    total: visibleTasks.length,
+    completed: visibleTasks.filter((t) => t.status === "completed").length,
+    inProgress: visibleTasks.filter((t) => t.status === "in_progress").length,
+    planned: visibleTasks.filter((t) => t.status === "planned").length,
+  }), [visibleTasks]);
+
+  const windowLabel = !isFull ? `${offsetToLabel(windowStart)} – ${offsetToLabel(windowStart + rangeDays - 1)}` : "";
 
   return (
     <>
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
         <div>
           <div className="text-base font-medium text-gray-900">Look-Ahead Schedule</div>
-          <div className="text-xs text-gray-500">Imported from OMSF_3_month_look_ahead_Schedule_Linked.xlsx · Jul 6 – Sep 11, 2026</div>
+          <div className="text-xs text-gray-500">
+            {!isFull ? `${activeWindow.label} · ${windowLabel}, 2026` : "Full Schedule · Jul 6 – Sep 11, 2026"}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <select value={filterArea} onChange={(e) => setFilterArea(e.target.value)} className="text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-blue-400">
@@ -80,6 +109,28 @@ function LookAheadContent() {
           </select>
           <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export</button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2 px-6 py-2.5 border-b border-gray-200 bg-white shrink-0">
+        <span className="text-xs text-gray-500">Look-ahead window:</span>
+        <select
+          value={windowChoice}
+          onChange={(e) => setWindowChoice(e.target.value)}
+          className="text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-blue-400"
+        >
+          {WINDOW_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+        </select>
+
+        {!isFull && (
+          <div className="flex items-center gap-1 ml-2">
+            <button onClick={() => setWindowStart((w) => w - 7)} className="p-1.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"><ChevronLeft size={14} /></button>
+            <button
+              onClick={() => setWindowStart(TODAY_OFFSET - (TODAY_OFFSET % 7))}
+              className="text-xs px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >Today</button>
+            <button onClick={() => setWindowStart((w) => w + 7)} className="p-1.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"><ChevronRight size={14} /></button>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-5 px-6 border-b border-gray-200 bg-white shrink-0">
@@ -96,16 +147,18 @@ function LookAheadContent() {
 
       <div className="flex-1 overflow-auto">
         {tab === "Gantt" ? (
-          <div style={{ minWidth: TOTAL_DAYS * DAY_WIDTH + 260 }}>
+          <div style={{ minWidth: rangeDays * DAY_WIDTH + 260 }}>
             {/* Timeline header */}
             <div className="flex border-b border-gray-200 bg-white sticky top-0 z-10">
               <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-400 border-r border-gray-100">Area / Group / Task</div>
               <div className="relative flex-1" style={{ height: 32 }}>
-                {WEEK_TICKS.map((w) => (
+                {weekTicks.map((w) => (
                   <div key={w.offset} className="absolute top-0 h-full border-l border-gray-100 text-[10px] text-gray-400 pl-1 pt-2"
                     style={{ left: w.offset * DAY_WIDTH }}>{w.label}</div>
                 ))}
-                <div className="absolute top-0 h-full border-l-2 border-red-400" style={{ left: TODAY_OFFSET * DAY_WIDTH }} title="Today — Jul 18, 2026" />
+                {TODAY_OFFSET >= rangeStart && TODAY_OFFSET <= rangeStart + rangeDays && (
+                  <div className="absolute top-0 h-full border-l-2 border-red-400" style={{ left: (TODAY_OFFSET - rangeStart) * DAY_WIDTH }} title="Today — Jul 18, 2026" />
+                )}
               </div>
             </div>
 
@@ -120,6 +173,12 @@ function LookAheadContent() {
                   {g.tasks.map((t, i) => {
                     const s = STATUS[t.status];
                     const isHovered = hovered === `${g.area}__${g.group}__${i}`;
+                    // Clip the bar to the visible range so tasks that start
+                    // before the window (or end after it) still render sensibly.
+                    const barStart = Math.max(t.offset, rangeStart);
+                    const barEnd = Math.min(t.offset + t.span, rangeStart + rangeDays);
+                    const left = (barStart - rangeStart) * DAY_WIDTH;
+                    const width = Math.max((barEnd - barStart) * DAY_WIDTH - 2, 6);
                     return (
                       <div key={i} className="flex border-b border-gray-50">
                         <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-700 border-r border-gray-100 truncate" title={t.title}>{t.title}</div>
@@ -129,13 +188,13 @@ function LookAheadContent() {
                             onMouseLeave={() => setHovered(null)}
                             className={`absolute top-1.5 h-6 rounded border px-1.5 flex items-center text-[10px] cursor-pointer ${s.bar}`}
                             style={{
-                              left: t.offset * DAY_WIDTH,
-                              width: Math.max(t.span * DAY_WIDTH - 2, 6),
+                              left,
+                              width,
                               boxShadow: isHovered ? "0 0 0 2px rgba(0,0,0,0.2)" : "none",
                             }}
                             title={`${t.title} · ${t.start} → ${t.end}${t.notes ? " · " + t.notes : ""}`}
                           >
-                            {t.span * DAY_WIDTH > 40 && <span className="truncate">{s.label}</span>}
+                            {width > 40 && <span className="truncate">{s.label}</span>}
                           </div>
                         </div>
                       </div>
@@ -143,6 +202,9 @@ function LookAheadContent() {
                   })}
                 </div>
               ))}
+              {groups.length === 0 && (
+                <div className="px-4 py-10 text-center text-gray-400 text-xs">No activities scheduled in this 4-week window.</div>
+              )}
             </div>
           </div>
         ) : (
