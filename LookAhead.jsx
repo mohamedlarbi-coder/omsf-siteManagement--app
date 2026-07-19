@@ -30,6 +30,18 @@ function offsetToLabel(offset) {
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function offsetToWeekdayShort(offset) {
+  const dt = new Date(PROJECT_START + "T00:00:00");
+  dt.setDate(dt.getDate() + offset);
+  return dt.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+function offsetToDayNum(offset) {
+  const dt = new Date(PROJECT_START + "T00:00:00");
+  dt.setDate(dt.getDate() + offset);
+  return dt.getDate();
+}
+
 // Week tick marks along the top of the timeline, every 7 days from a given start.
 function buildWeekTicks(rangeStart, rangeDays) {
   const ticks = [];
@@ -37,6 +49,17 @@ function buildWeekTicks(rangeStart, rangeDays) {
     ticks.push({ offset: d, label: offsetToLabel(rangeStart + d) });
   }
   return ticks;
+}
+
+// One entry per calendar day in the visible range — used for the responsive
+// day-by-day header when a short window (1-4 weeks) is selected, so each
+// day gets its own labeled column instead of just a weekly tick mark.
+function buildDayHeaders(rangeStart, rangeDays) {
+  const days = [];
+  for (let d = 0; d < rangeDays; d++) {
+    days.push({ offset: d, weekday: offsetToWeekdayShort(rangeStart + d), dayNum: offsetToDayNum(rangeStart + d) });
+  }
+  return days;
 }
 
 function useScheduleRows(tasks) {
@@ -83,6 +106,12 @@ function LookAheadContent() {
   const groups = useScheduleRows(visibleTasks);
   const listData = useMemo(() => visibleTasks.slice().sort((a, b) => a.offset - b.offset), [visibleTasks]);
   const weekTicks = useMemo(() => buildWeekTicks(rangeStart, rangeDays), [rangeStart, rangeDays]);
+  // Short windows (1-4 weeks) get a fully responsive, day-by-day layout that
+  // fills the screen width instead of a fixed pixel-per-day scrollable strip —
+  // this is the "zoom in" behavior: fewer days visible means each one gets
+  // more horizontal room automatically.
+  const isResponsive = !isFull;
+  const dayHeaders = useMemo(() => (isResponsive ? buildDayHeaders(rangeStart, rangeDays) : []), [isResponsive, rangeStart, rangeDays]);
 
   const counts = useMemo(() => ({
     total: visibleTasks.length,
@@ -147,19 +176,30 @@ function LookAheadContent() {
 
       <div className="flex-1 overflow-auto">
         {tab === "Gantt" ? (
-          <div style={{ minWidth: rangeDays * DAY_WIDTH + 260 }}>
+          <div style={isResponsive ? { minWidth: "100%" } : { minWidth: rangeDays * DAY_WIDTH + 260 }}>
             {/* Timeline header */}
             <div className="flex border-b border-gray-200 bg-white sticky top-0 z-10">
               <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-400 border-r border-gray-100">Area / Group / Task</div>
-              <div className="relative flex-1" style={{ height: 32 }}>
-                {weekTicks.map((w) => (
-                  <div key={w.offset} className="absolute top-0 h-full border-l border-gray-100 text-[10px] text-gray-400 pl-1 pt-2"
-                    style={{ left: w.offset * DAY_WIDTH }}>{w.label}</div>
-                ))}
-                {TODAY_OFFSET >= rangeStart && TODAY_OFFSET <= rangeStart + rangeDays && (
-                  <div className="absolute top-0 h-full border-l-2 border-red-400" style={{ left: (TODAY_OFFSET - rangeStart) * DAY_WIDTH }} title="Today — Jul 18, 2026" />
-                )}
-              </div>
+              {isResponsive ? (
+                <div className="relative flex-1 flex" style={{ height: 36 }}>
+                  {dayHeaders.map((d) => (
+                    <div key={d.offset} className={`flex-1 flex flex-col items-center justify-center text-[10px] border-r border-gray-100 last:border-r-0 ${rangeStart + d.offset === TODAY_OFFSET ? "bg-red-50" : ""}`}>
+                      <div className="text-gray-400">{d.weekday}</div>
+                      <div className={`font-medium ${rangeStart + d.offset === TODAY_OFFSET ? "text-red-600" : "text-gray-700"}`}>{d.dayNum}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="relative flex-1" style={{ height: 32 }}>
+                  {weekTicks.map((w) => (
+                    <div key={w.offset} className="absolute top-0 h-full border-l border-gray-100 text-[10px] text-gray-400 pl-1 pt-2"
+                      style={{ left: w.offset * DAY_WIDTH }}>{w.label}</div>
+                  ))}
+                  {TODAY_OFFSET >= rangeStart && TODAY_OFFSET <= rangeStart + rangeDays && (
+                    <div className="absolute top-0 h-full border-l-2 border-red-400" style={{ left: (TODAY_OFFSET - rangeStart) * DAY_WIDTH }} title="Today — Jul 18, 2026" />
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Rows grouped by Area > Group */}
@@ -177,24 +217,40 @@ function LookAheadContent() {
                     // before the window (or end after it) still render sensibly.
                     const barStart = Math.max(t.offset, rangeStart);
                     const barEnd = Math.min(t.offset + t.span, rangeStart + rangeDays);
-                    const left = (barStart - rangeStart) * DAY_WIDTH;
-                    const width = Math.max((barEnd - barStart) * DAY_WIDTH - 2, 6);
+                    const leftPct = ((barStart - rangeStart) / rangeDays) * 100;
+                    const widthPct = ((barEnd - barStart) / rangeDays) * 100;
+                    const left = isResponsive ? `${leftPct}%` : (barStart - rangeStart) * DAY_WIDTH;
+                    const width = isResponsive ? `calc(${widthPct}% - 4px)` : Math.max((barEnd - barStart) * DAY_WIDTH - 2, 6);
+                    // Rough estimate of rendered pixel width, just to decide whether
+                    // there's room to show the status label text inside the bar.
+                    const roughPx = isResponsive ? widthPct * 8 : (barEnd - barStart) * DAY_WIDTH;
                     return (
                       <div key={i} className="flex border-b border-gray-50">
                         <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-700 border-r border-gray-100 truncate" title={t.title}>{t.title}</div>
-                        <div className="flex-1 relative" style={{ height: 34 }}>
+                        <div className="flex-1 relative" style={{ height: isResponsive ? 44 : 34 }}>
+                          {isResponsive && dayHeaders.map((d) => (
+                            <div key={d.offset} className="absolute top-0 h-full border-r border-gray-50 last:border-r-0" style={{ left: `${(d.offset / rangeDays) * 100}%`, width: `${(1 / rangeDays) * 100}%` }} />
+                          ))}
                           <div
                             onMouseEnter={() => setHovered(`${g.area}__${g.group}__${i}`)}
                             onMouseLeave={() => setHovered(null)}
-                            className={`absolute top-1.5 h-6 rounded border px-1.5 flex items-center text-[10px] cursor-pointer ${s.bar}`}
+                            className={`absolute top-1.5 rounded border px-1.5 flex flex-col justify-center cursor-pointer ${s.bar}`}
                             style={{
                               left,
                               width,
+                              height: isResponsive ? 38 : 24,
                               boxShadow: isHovered ? "0 0 0 2px rgba(0,0,0,0.2)" : "none",
                             }}
                             title={`${t.title} · ${t.start} → ${t.end}${t.notes ? " · " + t.notes : ""}`}
                           >
-                            {width > 40 && <span className="truncate">{s.label}</span>}
+                            {isResponsive ? (
+                              <>
+                                <span className="truncate text-[10px] font-medium leading-tight">{t.title}</span>
+                                <span className="truncate text-[9px] opacity-70 leading-tight">{s.label}{t.notes ? ` · ${t.notes}` : ""}</span>
+                              </>
+                            ) : (
+                              roughPx > 40 && <span className="truncate text-[10px]">{s.label}</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -203,7 +259,7 @@ function LookAheadContent() {
                 </div>
               ))}
               {groups.length === 0 && (
-                <div className="px-4 py-10 text-center text-gray-400 text-xs">No activities scheduled in this 4-week window.</div>
+                <div className="px-4 py-10 text-center text-gray-400 text-xs">No activities scheduled in this window.</div>
               )}
             </div>
           </div>
