@@ -122,3 +122,29 @@ export function needsAttention(task, offset = TODAY_OFFSET) {
   const s = getFlagState(task, offset);
   return s === "unreported" || s === "unexplained";
 }
+
+// =============================================================================
+// Ad-hoc activities — things that happen on site but were never on the
+// schedule (maintenance, a client walk-through, an emergency repair, etc.).
+// Shaped exactly like a REAL_SCHEDULE task (id/title/area/group/subcontractor/
+// offset/span) so they flow through the same Yes/No + flagging logic above
+// without any special-casing — a custom activity is just a task with no
+// entry in schedule.js.
+// =============================================================================
+let customActivities = [];
+
+export function addCustomActivity(offset, title, subcontractor = "—") {
+  const id = `custom-${offset}-${Date.now()}-${Math.round(Math.random() * 999)}`;
+  customActivities = [...customActivities, { id, title, area: "Unplanned", group: "Ad-hoc / Maintenance", subcontractor, offset, span: 1 }];
+  emit();
+  return id;
+}
+
+export function removeCustomActivity(id) {
+  customActivities = customActivities.filter((c) => c.id !== id);
+  emit();
+}
+
+export function getCustomActivities(offset = TODAY_OFFSET) {
+  return customActivities.filter((c) => c.offset === offset);
+}
