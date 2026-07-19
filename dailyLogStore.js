@@ -1,23 +1,21 @@
 import { useSyncExternalStore } from "react";
 import { TODAY_OFFSET } from "./schedule.js";
+import { supabase } from "./supabaseClient.js";
 
 // =============================================================================
 // Planned-vs-actual variance tracker (spec Section 8: "Daily Report
-// Intelligence"). This is a tiny in-memory shared store — no backend wired
-// in yet — so LookAhead.jsx and DailyReport.jsx both read/write the same
-// data and stay in sync within a session. Once Supabase is connected, these
-// functions are the natural place to swap in real reads/writes to the
-// `daily_report_activities` table from schema.sql (that table is already
-// designed as one row per activity per date, which is exactly this shape).
-//
-// Entries are keyed by (task, day) — not just task — so browsing to a
-// different date in the Daily Report doesn't overwrite or hide what was
-// recorded for "today". Every function defaults its `offset` argument to
-// TODAY_OFFSET, so existing call sites that only ever care about "today"
-// (like the Look-Ahead flag badges) don't need to change.
+// Intelligence") — now backed by Supabase (tables: daily_activity_logs,
+// custom_activities) so entries are shared across every signed-in user,
+// not just the local browser session. A local cache still mirrors the data
+// for instant UI updates; Supabase Realtime keeps that cache in sync with
+// what other users are writing.
 // =============================================================================
 
-let logs = {}; // { [`${taskId}__${offset}`]: { status, reportNote, flagNote, flagNoteAt } }
+let logs = {}; // { [`${taskId}__${offset}`]: { status, reportNote, flagNote, flagNoteAt, updatedBy } }
+let customActivities = []; // [{ id, title, area, group, subcontractor, offset, span, createdBy }]
+let currentUserName = "Someone";
+let initialized = false;
+
 const listeners = new Set();
 
 function key(taskId, offset) {
@@ -28,78 +26,151 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function getSnapshot() {
+function getLogsSnapshot() {
   return logs;
 }
 
 function subscribe(callback) {
   listeners.add(callback);
+  ensureInit();
   return () => listeners.delete(callback);
 }
 
 export function useDailyLogs() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(subscribe, getLogsSnapshot, getLogsSnapshot);
+}
+
+// Called once from App.jsx after sign-in, so writes can be attributed to
+// whoever is actually logged in.
+export function setCurrentUser(name) {
+  currentUserName = name || "Someone";
+}
+
+// -----------------------------------------------------------------------
+// Supabase sync: fetch once, then keep in sync via realtime subscriptions.
+// -----------------------------------------------------------------------
+function ensureInit() {
+  if (initialized || !supabase) return;
+  initialized = true;
+
+  supabase.from("daily_activity_logs").select("*").then(({ data, error }) => {
+    if (error) { console.error("daily_activity_logs fetch failed:", error.message); return; }
+    const next = {};
+    (data || []).forEach((row) => {
+      next[key(row.task_id, row.day_offset)] = {
+        status: row.status, reportNote: row.report_note, flagNote: row.flag_note,
+        flagNoteAt: row.flag_note_at, updatedBy: row.updated_by,
+      };
+    });
+    logs = next;
+    emit();
+  });
+
+  supabase.from("custom_activities").select("*").then(({ data, error }) => {
+    if (error) { console.error("custom_activities fetch failed:", error.message); return; }
+    customActivities = (data || []).map((row) => ({
+      id: row.id, title: row.title, area: row.area, group: row.group_name,
+      subcontractor: row.subcontractor, offset: row.day_offset, span: 1, createdBy: row.created_by,
+    }));
+    emit();
+  });
+
+  supabase
+    .channel("daily-activity-logs-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "daily_activity_logs" }, (payload) => {
+      const row = payload.new && Object.keys(payload.new).length ? payload.new : payload.old;
+      if (!row) return;
+      const k = key(row.task_id, row.day_offset);
+      if (payload.eventType === "DELETE") {
+        const next = { ...logs };
+        delete next[k];
+        logs = next;
+      } else {
+        logs = { ...logs, [k]: {
+          status: row.status, reportNote: row.report_note, flagNote: row.flag_note,
+          flagNoteAt: row.flag_note_at, updatedBy: row.updated_by,
+        } };
+      }
+      emit();
+    })
+    .subscribe();
+
+  supabase
+    .channel("custom-activities-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "custom_activities" }, (payload) => {
+      if (payload.eventType === "DELETE") {
+        customActivities = customActivities.filter((c) => c.id !== payload.old.id);
+      } else {
+        const row = payload.new;
+        const mapped = {
+          id: row.id, title: row.title, area: row.area, group: row.group_name,
+          subcontractor: row.subcontractor, offset: row.day_offset, span: 1, createdBy: row.created_by,
+        };
+        const exists = customActivities.some((c) => c.id === row.id);
+        customActivities = exists
+          ? customActivities.map((c) => (c.id === row.id ? mapped : c))
+          : [...customActivities, mapped];
+      }
+      emit();
+    })
+    .subscribe();
+}
+
+// -----------------------------------------------------------------------
+// Writes — update the local cache immediately (so the UI feels instant),
+// then push to Supabase in the background. Other signed-in users get the
+// update via the realtime subscription above.
+// -----------------------------------------------------------------------
+async function upsertLog(taskId, offset, patch) {
+  const k = key(taskId, offset);
+  logs = { ...logs, [k]: { ...(logs[k] || {}), ...patch } };
+  emit();
+  if (!supabase) return;
+  const row = logs[k];
+  const { error } = await supabase.from("daily_activity_logs").upsert({
+    task_id: taskId,
+    day_offset: offset,
+    status: row.status ?? null,
+    report_note: row.reportNote ?? null,
+    flag_note: row.flagNote ?? null,
+    flag_note_at: row.flagNoteAt ?? null,
+    updated_by: currentUserName,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) console.error("Failed to save daily log entry:", error.message);
 }
 
 export function setTaskStatus(taskId, status, offset = TODAY_OFFSET) {
-  const k = key(taskId, offset);
-  logs = { ...logs, [k]: { ...(logs[k] || {}), status } };
-  emit();
+  upsertLog(taskId, offset, { status, updatedBy: currentUserName });
 }
 
 export function setTaskField(taskId, field, value, offset = TODAY_OFFSET) {
-  const k = key(taskId, offset);
-  logs = { ...logs, [k]: { ...(logs[k] || {}), [field]: value } };
-  emit();
+  upsertLog(taskId, offset, { [field]: value, updatedBy: currentUserName });
 }
 
 export function addFlagNote(taskId, text, offset = TODAY_OFFSET) {
-  const k = key(taskId, offset);
-  logs = { ...logs, [k]: { ...(logs[k] || {}), flagNote: text, flagNoteAt: new Date().toISOString() } };
-  emit();
+  upsertLog(taskId, offset, { flagNote: text, flagNoteAt: new Date().toISOString(), updatedBy: currentUserName });
 }
 
 export function getEntry(taskId, offset = TODAY_OFFSET) {
   return logs[key(taskId, offset)] || {};
 }
 
-// A task is "logged" for a given day once the Daily Report has any status
-// recorded for it on that day — this is what clears the automatic
-// "unreported" flag for that specific date.
 export function isLogged(taskId, offset = TODAY_OFFSET) {
   const entry = logs[key(taskId, offset)];
   return !!(entry && entry.status);
 }
 
-// A task is "active" on a given day if that day falls anywhere inside its
-// planned [start, end) span — this is what makes it show up on that day's
-// Daily Report in the first place.
 export function isTaskActiveOnOffset(task, offset = TODAY_OFFSET) {
   return task.offset <= offset && task.offset + task.span > offset;
 }
 
-// Kept as a convenience alias for the common "is this happening today"
-// check, since that's still what the Look-Ahead flag badges care about.
 export function isTaskActiveToday(task) {
   return isTaskActiveOnOffset(task, TODAY_OFFSET);
 }
 
-// Statuses that represent a deviation from plan — these are the ones worth
-// flagging even once they're recorded, so the variance stays visible for
-// tracking rather than disappearing the moment *something* gets typed in.
 const VARIANCE_STATUSES = ["delayed", "cancelled", "not_started", "partially_completed"];
 
-// The core rule the person asked for, in three levels, evaluated for a
-// specific day (defaulting to today):
-//   "unreported"  — scheduled that day, nothing recorded at all (needs attention now)
-//   "unexplained" — a status like Delayed/Cancelled was recorded, but no note
-//                   says why (still needs attention)
-//   "explained"   — a variance status was recorded AND a note (in the Daily
-//                   Report itself, or added via the flag) explains why — still
-//                   shown so the variance stays visible in the tracker, but
-//                   calm rather than urgent since nothing further is needed
-//   "none"        — not scheduled that day, or recorded as on-plan (completed/
-//                   in_progress) with no issue
 export function getFlagState(task, offset = TODAY_OFFSET) {
   if (!isTaskActiveOnOffset(task, offset)) return "none";
   const entry = logs[key(task.id, offset)] || {};
@@ -109,49 +180,44 @@ export function getFlagState(task, offset = TODAY_OFFSET) {
   return hasNote ? "explained" : "unexplained";
 }
 
-// Kept for simple call sites that only need a yes/no — true for any of the
-// three non-"none" states above.
 export function isFlagged(task, offset = TODAY_OFFSET) {
   return getFlagState(task, offset) !== "none";
 }
 
-// Only the two urgent states — used where we want a count of things that
-// genuinely still need action, separate from variances that are already
-// explained and just being tracked.
 export function needsAttention(task, offset = TODAY_OFFSET) {
   const s = getFlagState(task, offset);
   return s === "unreported" || s === "unexplained";
 }
 
-// =============================================================================
-// Ad-hoc activities — things that happen on site but were never on the
-// schedule (maintenance, a client walk-through, an emergency repair, etc.).
-// Shaped exactly like a REAL_SCHEDULE task (id/title/area/group/subcontractor/
-// offset/span) so they flow through the same Yes/No + flagging logic above
-// without any special-casing — a custom activity is just a task with no
-// entry in schedule.js.
-// =============================================================================
-let customActivities = [];
-
-export function addCustomActivity(offset, title, subcontractor = "—") {
+// -----------------------------------------------------------------------
+// Ad-hoc activities (maintenance, walk-throughs, etc. not on the schedule)
+// -----------------------------------------------------------------------
+export async function addCustomActivity(offset, title, subcontractor = "—") {
   const id = `custom-${offset}-${Date.now()}-${Math.round(Math.random() * 999)}`;
-  customActivities = [...customActivities, { id, title, area: "Unplanned", group: "Ad-hoc / Maintenance", subcontractor, offset, span: 1 }];
+  const activity = { id, title, area: "Unplanned", group: "Ad-hoc / Maintenance", subcontractor, offset, span: 1, createdBy: currentUserName };
+  customActivities = [...customActivities, activity];
   emit();
+  if (!supabase) return id;
+  const { error } = await supabase.from("custom_activities").insert({
+    id, day_offset: offset, title, area: "Unplanned", group_name: "Ad-hoc / Maintenance",
+    subcontractor, created_by: currentUserName,
+  });
+  if (error) console.error("Failed to save ad-hoc activity:", error.message);
   return id;
 }
 
-export function removeCustomActivity(id) {
+export async function removeCustomActivity(id) {
   customActivities = customActivities.filter((c) => c.id !== id);
   emit();
+  if (!supabase) return;
+  const { error } = await supabase.from("custom_activities").delete().eq("id", id);
+  if (error) console.error("Failed to delete ad-hoc activity:", error.message);
 }
 
 export function getCustomActivities(offset = TODAY_OFFSET) {
   return customActivities.filter((c) => c.offset === offset);
 }
 
-// Every ad-hoc activity ever added, across all days — this is what lets
-// Look-Ahead show them too (as a permanent record, not just visible on the
-// one Daily Report they were typed into).
 export function getAllCustomActivities() {
   return customActivities;
 }
