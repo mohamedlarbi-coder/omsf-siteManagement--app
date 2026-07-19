@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useRef } from "react";
-import { Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, ChevronLeft, ChevronRight, Flag } from "lucide-react";
 import { STATUS } from "./status.jsx";
-import { REAL_SCHEDULE } from "./schedule.js";
+import { REAL_SCHEDULE, PROJECT_START, TODAY_OFFSET } from "./schedule.js";
+import { useDailyLogs, getFlagState, needsAttention, addFlagNote, getEntry } from "./dailyLogStore.js";
 
 // =============================================================================
 // MODULE 4 — Three-Week / Multi-Week Look-Ahead
@@ -10,8 +11,6 @@ import { REAL_SCHEDULE } from "./schedule.js";
 // offset/span are calendar-day counts from PROJECT_START — precomputed in Python
 // at import time rather than done with JS Date math, to avoid timezone drift.
 // =============================================================================
-const PROJECT_START = "2026-07-06";
-const TODAY_OFFSET = 12; // 2026-07-18, per the current conversation date
 
 const WINDOW_OPTIONS = [
   { value: "1", label: "1 Week", days: 7 },
@@ -76,6 +75,7 @@ function useScheduleRows(tasks) {
 }
 
 function LookAheadContent() {
+  const logSnapshot = useDailyLogs(); // subscribe so this view re-renders when Daily Report entries change
   const [filterArea, setFilterArea] = useState("all");
   const [filterSub, setFilterSub] = useState("all");
   const [tab, setTab] = useState("Gantt");
@@ -123,7 +123,21 @@ function LookAheadContent() {
     planned: visibleTasks.filter((t) => t.status === "planned").length,
   }), [visibleTasks]);
 
+  // Flags are based on the FULL schedule (not just the filtered/visible
+  // slice) so the count is always accurate regardless of which window or
+  // area filter happens to be selected.
+  const todaysFlags = useMemo(() => REAL_SCHEDULE.filter((t) => needsAttention(t)), [logSnapshot]);
+
   const windowLabel = !isFull ? `${offsetToLabel(windowStart)} – ${offsetToLabel(windowStart + rangeDays - 1)}` : "";
+
+  function handleFlagClick(task) {
+    const existing = getEntry(task.id).flagNote || "";
+    const text = window.prompt(
+      `"${task.title}" was scheduled for today but hasn't been recorded in the Daily Report yet.\n\nWhy? (this note will show up in both the Look-Ahead and the Daily Report)`,
+      existing
+    );
+    if (text !== null && text.trim() !== "") addFlagNote(task.id, text.trim());
+  }
 
   const contentRef = useRef(null);
 
@@ -227,6 +241,13 @@ function LookAheadContent() {
         )}
       </div>
 
+      {todaysFlags.length > 0 && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700 shrink-0">
+          <Flag size={13} fill="currentColor" />
+          {todaysFlags.length} activit{todaysFlags.length > 1 ? "ies" : "y"} scheduled today {todaysFlags.length > 1 ? "need" : "needs"} attention — click the 🚩 on the row to add a note.
+        </div>
+      )}
+
       <div className="flex items-center gap-5 px-6 border-b border-gray-200 bg-white shrink-0">
         {["Gantt", "List"].map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`py-2.5 text-xs border-b-2 ${tab === t ? "border-blue-600 text-blue-600 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}>{t}</button>
@@ -279,6 +300,10 @@ function LookAheadContent() {
                   {g.tasks.map((t, i) => {
                     const s = STATUS[t.status];
                     const isHovered = hovered === `${g.area}__${g.group}__${i}`;
+                    const flagState = getFlagState(t);
+                    const flagged = flagState !== "none";
+                    const flagExplained = flagState === "explained";
+                    const flagNote = getEntry(t.id).flagNote || getEntry(t.id).reportNote;
                     // Clip the bar to the visible range so tasks that start
                     // before the window (or end after it) still render sensibly.
                     const barStart = Math.max(t.offset, rangeStart);
@@ -291,8 +316,15 @@ function LookAheadContent() {
                     // there's room to show the status label text inside the bar.
                     const roughPx = isResponsive ? widthPct * 8 : (barEnd - barStart) * DAY_WIDTH;
                     return (
-                      <div key={i} className="flex border-b border-gray-50">
-                        <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-700 border-r border-gray-100 truncate" title={t.title}>{t.title}</div>
+                      <div key={i} className={`flex border-b border-gray-50 ${flagExplained ? "bg-amber-50/40" : flagged ? "bg-red-50/40" : ""}`}>
+                        <div className="w-64 shrink-0 px-4 py-2 text-xs text-gray-700 border-r border-gray-100 truncate flex items-center gap-1.5" title={t.title}>
+                          {flagged && (
+                            <button onClick={() => handleFlagClick(t)} title={flagNote ? `${flagExplained ? "Explained" : "Flagged"} — ${flagNote}` : "Flagged: scheduled today, not yet in Daily Report. Click to add a note."} className={flagExplained ? "shrink-0 text-amber-500 hover:text-amber-700" : "shrink-0 text-red-500 hover:text-red-700"}>
+                              <Flag size={12} fill={flagExplained || flagNote ? "currentColor" : "none"} />
+                            </button>
+                          )}
+                          <span className="truncate">{t.title}</span>
+                        </div>
                         <div className="flex-1 relative" style={{ height: isResponsive ? 44 : 34 }}>
                           {isResponsive && dayHeaders.map((d) => (
                             <div key={d.offset} className="absolute top-0 h-full border-r border-gray-50 last:border-r-0" style={{ left: `${(d.offset / rangeDays) * 100}%`, width: `${(1 / rangeDays) * 100}%` }} />
@@ -300,14 +332,14 @@ function LookAheadContent() {
                           <div
                             onMouseEnter={() => setHovered(`${g.area}__${g.group}__${i}`)}
                             onMouseLeave={() => setHovered(null)}
-                            className={`absolute top-1.5 rounded border px-1.5 flex flex-col justify-center cursor-pointer ${s.bar}`}
+                            className={`absolute top-1.5 rounded border px-1.5 flex flex-col justify-center cursor-pointer ${s.bar} ${flagExplained ? "ring-2 ring-amber-400" : flagged ? "ring-2 ring-red-400" : ""}`}
                             style={{
                               left,
                               width,
                               height: isResponsive ? 38 : 24,
                               boxShadow: isHovered ? "0 0 0 2px rgba(0,0,0,0.2)" : "none",
                             }}
-                            title={`${t.title} · ${t.start} → ${t.end}${t.notes ? " · " + t.notes : ""}`}
+                            title={`${t.title} · ${t.start} → ${t.end}${t.notes ? " · " + t.notes : ""}${flagged ? (flagExplained ? " · ⚠ Variance (explained)" : " · ⚠ Needs attention") : ""}`}
                           >
                             {isResponsive ? (
                               <>
@@ -332,6 +364,7 @@ function LookAheadContent() {
         ) : (
           <table className="w-full text-left">
             <thead className="bg-white sticky top-0"><tr className="text-xs text-gray-500 border-b border-gray-100">
+              <th className="px-4 py-2 font-normal"></th>
               <th className="px-4 py-2 font-normal">Area</th><th className="px-4 py-2 font-normal">Group</th>
               <th className="px-4 py-2 font-normal">Task</th><th className="px-4 py-2 font-normal">Subcontractor</th>
               <th className="px-4 py-2 font-normal">Start</th>
@@ -339,18 +372,31 @@ function LookAheadContent() {
               <th className="px-4 py-2 font-normal">Notes</th>
             </tr></thead>
             <tbody className="bg-white">
-              {listData.map((t, i) => (
-                <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
-                  <td className="px-4 py-2 text-gray-600">{t.area}</td>
-                  <td className="px-4 py-2 text-gray-600">{t.group}</td>
-                  <td className="px-4 py-2 text-gray-900">{t.title}</td>
-                  <td className="px-4 py-2 text-gray-600">{t.subcontractor}</td>
-                  <td className="px-4 py-2 text-gray-600">{t.start}</td>
-                  <td className="px-4 py-2 text-gray-600">{t.end}</td>
-                  <td className="px-4 py-2"><span className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS[t.status].bar}`}>{STATUS[t.status].label}</span></td>
-                  <td className="px-4 py-2 text-gray-400">{t.notes || "—"}</td>
-                </tr>
-              ))}
+              {listData.map((t, i) => {
+                const flagState = getFlagState(t);
+                const flagged = flagState !== "none";
+                const flagExplained = flagState === "explained";
+                const flagNote = getEntry(t.id).flagNote || getEntry(t.id).reportNote;
+                return (
+                  <tr key={i} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50 ${flagExplained ? "bg-amber-50/40" : flagged ? "bg-red-50/40" : ""}`}>
+                    <td className="px-4 py-2">
+                      {flagged && (
+                        <button onClick={() => handleFlagClick(t)} title={flagNote ? `${flagExplained ? "Explained" : "Flagged"} — ${flagNote}` : "Flagged: scheduled today, not yet in Daily Report. Click to add a note."} className={flagExplained ? "text-amber-500 hover:text-amber-700" : "text-red-500 hover:text-red-700"}>
+                          <Flag size={13} fill={flagExplained || flagNote ? "currentColor" : "none"} />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-gray-600">{t.area}</td>
+                    <td className="px-4 py-2 text-gray-600">{t.group}</td>
+                    <td className="px-4 py-2 text-gray-900">{t.title}</td>
+                    <td className="px-4 py-2 text-gray-600">{t.subcontractor}</td>
+                    <td className="px-4 py-2 text-gray-600">{t.start}</td>
+                    <td className="px-4 py-2 text-gray-600">{t.end}</td>
+                    <td className="px-4 py-2"><span className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS[t.status].bar}`}>{STATUS[t.status].label}</span></td>
+                    <td className="px-4 py-2 text-gray-400">{t.notes || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
