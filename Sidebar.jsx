@@ -28,6 +28,7 @@ export const NAV = [
 
 export default function Sidebar({ view, setView, user }) {
   const displayName = user?.user_metadata?.full_name || user?.email || "Signed in";
+  const position = user?.user_metadata?.position;
 
   return (
     <div className="w-52 bg-[#0B1B33] text-gray-300 flex flex-col shrink-0">
@@ -54,7 +55,10 @@ export default function Sidebar({ view, setView, user }) {
       </nav>
       {user && (
         <div className="px-4 py-3 border-t border-white/10 flex items-center justify-between gap-2">
-          <span className="text-xs text-gray-300 truncate" title={displayName}>{displayName}</span>
+          <div className="min-w-0">
+            <div className="text-xs text-gray-100 truncate" title={displayName}>{displayName}</div>
+            {position && <div className="text-[11px] text-gray-400 truncate">{position}</div>}
+          </div>
           <button onClick={() => supabase?.auth.signOut()} title="Sign out" className="shrink-0 text-gray-400 hover:text-white">
             <LogOut size={14} />
           </button>
