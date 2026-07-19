@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle } from "lucide-react";
+import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import { STATUS } from "./status.jsx";
-import { REAL_SCHEDULE } from "./schedule.js";
-import { useDailyLogs, isTaskActiveToday, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry } from "./dailyLogStore.js";
+import { REAL_SCHEDULE, TODAY_OFFSET, offsetToFullLabel } from "./schedule.js";
+import { useDailyLogs, isTaskActiveOnOffset, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry } from "./dailyLogStore.js";
 
 // =============================================================================
 // MODULE 3 — Daily Report
@@ -32,8 +32,9 @@ const DR_INITIAL_MANPOWER = [
 
 function DailyReportContent() {
   const logSnapshot = useDailyLogs(); // subscribe so this view re-renders when statuses/notes change
-  const todaysTasks = REAL_SCHEDULE.filter((t) => isTaskActiveToday(t));
-  const urgentTasks = todaysTasks.filter((t) => needsAttention(t));
+  const [selectedOffset, setSelectedOffset] = useState(TODAY_OFFSET);
+  const todaysTasks = REAL_SCHEDULE.filter((t) => isTaskActiveOnOffset(t, selectedOffset));
+  const urgentTasks = todaysTasks.filter((t) => needsAttention(t, selectedOffset));
   const [manpower, setManpower] = useState(DR_INITIAL_MANPOWER);
   const [unplanned, setUnplanned] = useState([{ desc: "Repair column area", zone: "Z02-01", sub: "Concrete Sub", qty: "1 ea", note: "Client requested" }]);
   const [submitted, setSubmitted] = useState(false);
@@ -43,7 +44,7 @@ function DailyReportContent() {
   const [askingFor, setAskingFor] = useState(null);
 
   function handleYes(task) {
-    setTaskStatus(task.id, "completed");
+    setTaskStatus(task.id, "completed", selectedOffset);
     setAskingFor(null);
   }
 
@@ -53,24 +54,24 @@ function DailyReportContent() {
 
   function handleReasonChip(task, chip) {
     if (chip.label === "Other…") {
-      const text = window.prompt(`Quick answer — why didn't "${task.title}" happen today?`, "");
+      const text = window.prompt(`Quick answer — why didn't "${task.title}" happen on ${offsetToFullLabel(selectedOffset)}?`, "");
       if (text === null || text.trim() === "") return; // cancelled, leave it open
-      setTaskField(task.id, "reportNote", text.trim());
-      setTaskStatus(task.id, chip.status);
+      setTaskField(task.id, "reportNote", text.trim(), selectedOffset);
+      setTaskStatus(task.id, chip.status, selectedOffset);
     } else {
-      setTaskField(task.id, "reportNote", chip.label);
-      setTaskStatus(task.id, chip.status);
+      setTaskField(task.id, "reportNote", chip.label, selectedOffset);
+      setTaskStatus(task.id, chip.status, selectedOffset);
     }
     setAskingFor(null);
   }
 
   function handleFlagClick(task) {
-    const existing = getEntry(task.id).flagNote || "";
+    const existing = getEntry(task.id, selectedOffset).flagNote || "";
     const text = window.prompt(
-      `"${task.title}" was scheduled for today but hasn't been recorded yet.\n\nWhy? (this note will also show up on the Look-Ahead schedule)`,
+      `"${task.title}" was scheduled for ${offsetToFullLabel(selectedOffset)} but hasn't been recorded yet.\n\nWhy? (this note will also show up on the Look-Ahead schedule)`,
       existing
     );
-    if (text !== null && text.trim() !== "") addFlagNote(task.id, text.trim());
+    if (text !== null && text.trim() !== "") addFlagNote(task.id, text.trim(), selectedOffset);
   }
 
   const updateManpower = (idx, field, value) => setManpower((prev) => prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
@@ -84,7 +85,17 @@ function DailyReportContent() {
   return (
     <>
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
-        <div><div className="text-base font-medium text-gray-900">Daily Report</div><div className="text-xs text-gray-500">Saturday, 18 Jul 2026</div></div>
+        <div>
+          <div className="text-base font-medium text-gray-900">Daily Report</div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <button onClick={() => setSelectedOffset((o) => o - 1)} className="p-1 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"><ChevronLeft size={13} /></button>
+            <span className="text-xs text-gray-500">{offsetToFullLabel(selectedOffset)}</span>
+            <button onClick={() => setSelectedOffset((o) => o + 1)} className="p-1 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"><ChevronRight size={13} /></button>
+            {selectedOffset !== TODAY_OFFSET && (
+              <button onClick={() => setSelectedOffset(TODAY_OFFSET)} className="text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50">Today</button>
+            )}
+          </div>
+        </div>
         <button onClick={() => setSubmitted(true)} className="text-xs px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
           {submitted ? "Report submitted ✓" : "Submit Report"}
         </button>
@@ -131,8 +142,8 @@ function DailyReportContent() {
             </tr></thead>
             <tbody>
               {todaysTasks.map((t) => {
-                const entry = getEntry(t.id);
-                const flagState = getFlagState(t);
+                const entry = getEntry(t.id, selectedOffset);
+                const flagState = getFlagState(t, selectedOffset);
                 const rowTone = flagState === "explained" ? "bg-amber-50/50" : flagState !== "none" ? "bg-red-50/40" : "";
                 const flagColor = flagState === "explained" ? "text-amber-500 hover:text-amber-700" : "text-red-500 hover:text-red-700";
                 const flagTitle = flagState === "explained"
