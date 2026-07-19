@@ -77,6 +77,7 @@ function useScheduleRows(tasks) {
 
 function LookAheadContent() {
   const [filterArea, setFilterArea] = useState("all");
+  const [filterSub, setFilterSub] = useState("all");
   const [tab, setTab] = useState("Gantt");
   const [hovered, setHovered] = useState(null);
   const [windowChoice, setWindowChoice] = useState("4"); // "1".."4" or "full"
@@ -87,11 +88,13 @@ function LookAheadContent() {
   const [windowStart, setWindowStart] = useState(TODAY_OFFSET - (TODAY_OFFSET % 7));
 
   const areas = useMemo(() => [...new Set(REAL_SCHEDULE.map((t) => t.area))].sort(), []);
+  const subcontractors = useMemo(() => [...new Set(REAL_SCHEDULE.map((t) => t.subcontractor))].sort(), []);
 
-  const byArea = useMemo(
-    () => (filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea)),
-    [filterArea]
-  );
+  const byArea = useMemo(() => {
+    let src = filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea);
+    if (filterSub !== "all") src = src.filter((t) => t.subcontractor === filterSub);
+    return src;
+  }, [filterArea, filterSub]);
 
   const rangeStart = isFull ? 0 : windowStart;
   const rangeDays = isFull ? TOTAL_DAYS : activeWindow.days;
@@ -135,6 +138,10 @@ function LookAheadContent() {
           <select value={filterArea} onChange={(e) => setFilterArea(e.target.value)} className="text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-blue-400">
             <option value="all">All areas</option>
             {areas.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select value={filterSub} onChange={(e) => setFilterSub(e.target.value)} className="text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-blue-400">
+            <option value="all">All subcontractors</option>
+            {subcontractors.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export</button>
         </div>
@@ -267,7 +274,8 @@ function LookAheadContent() {
           <table className="w-full text-left">
             <thead className="bg-white sticky top-0"><tr className="text-xs text-gray-500 border-b border-gray-100">
               <th className="px-4 py-2 font-normal">Area</th><th className="px-4 py-2 font-normal">Group</th>
-              <th className="px-4 py-2 font-normal">Task</th><th className="px-4 py-2 font-normal">Start</th>
+              <th className="px-4 py-2 font-normal">Task</th><th className="px-4 py-2 font-normal">Subcontractor</th>
+              <th className="px-4 py-2 font-normal">Start</th>
               <th className="px-4 py-2 font-normal">End</th><th className="px-4 py-2 font-normal">Status</th>
               <th className="px-4 py-2 font-normal">Notes</th>
             </tr></thead>
@@ -277,6 +285,7 @@ function LookAheadContent() {
                   <td className="px-4 py-2 text-gray-600">{t.area}</td>
                   <td className="px-4 py-2 text-gray-600">{t.group}</td>
                   <td className="px-4 py-2 text-gray-900">{t.title}</td>
+                  <td className="px-4 py-2 text-gray-600">{t.subcontractor}</td>
                   <td className="px-4 py-2 text-gray-600">{t.start}</td>
                   <td className="px-4 py-2 text-gray-600">{t.end}</td>
                   <td className="px-4 py-2"><span className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS[t.status].bar}`}>{STATUS[t.status].label}</span></td>
