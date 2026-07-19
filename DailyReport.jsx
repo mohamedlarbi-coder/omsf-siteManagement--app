@@ -1,17 +1,18 @@
 import React, { useState } from "react";
-import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain } from "lucide-react";
+import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag } from "lucide-react";
 import { STATUS } from "./status.jsx";
+import { REAL_SCHEDULE } from "./schedule.js";
+import { useDailyLogs, isTaskActiveToday, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry } from "./dailyLogStore.js";
 
 // =============================================================================
 // MODULE 3 — Daily Report
+// Planned Activities now reads directly from the same REAL_SCHEDULE data as
+// the Look-Ahead module (today's tasks = whatever is active on TODAY_OFFSET),
+// and writes through dailyLogStore.js. This is what makes the automatic
+// variance flagging work: an activity scheduled for today that hasn't had a
+// status recorded here shows up flagged in both this module and Look-Ahead.
 // =============================================================================
-const DR_STATUS_OPTIONS = ["not_started","in_progress","completed","partially_completed","delayed"];
-const DR_INITIAL_PLANNED = [
-  { id: "ACT-0234", title: "Rebar Installation", zone: "Z02-01", sub: "Steel Fixer Sub", unit: "kg", plannedQty: 2500, actualQty: 2000, status: "in_progress", note: "" },
-  { id: "ACT-0236", title: "Concrete Walls", zone: "Z02-01", sub: "Concrete Sub", unit: "m³", plannedQty: 30, actualQty: 30, status: "completed", note: "" },
-  { id: "ACT-0240", title: "MEP Rough-In", zone: "Z02-02", sub: "MEP Sub", unit: "%", plannedQty: 100, actualQty: 0, status: "not_started", note: "Material not delivered" },
-  { id: "ACT-0242", title: "Slab Formwork", zone: "Z02-03", sub: "Carpentry Sub", unit: "m²", plannedQty: 120, actualQty: 40, status: "partially_completed", note: "" },
-];
+const DR_STATUS_OPTIONS = ["not_started","in_progress","completed","partially_completed","delayed","cancelled"];
 const DR_SUBCONTRACTOR_OPTIONS = ["Carpentry Sub","Steel Fixer Sub","Concrete Sub","MEP Sub","Masonry Sub","Waterproofing Sub","Electrical Sub","Excavation Sub"];
 const DR_ZONE_OPTIONS = ["Z02-01","Z02-02","Z02-03","Z02-04"];
 const DR_ACTIVITY_OPTIONS = ["Formwork Walls","Rebar Installation","Concrete Walls","MEP Rough-In","Slab Formwork","Slab Rebar","Concrete Slab","Block Work","Waterproofing"];
@@ -21,35 +22,49 @@ const DR_INITIAL_MANPOWER = [
   { sub: "Carpentry Sub", zone: "Z02-03", manpower: 5, activity: "Slab Formwork" },
 ];
 
-function DR_StatusSelect({ value, onChange }) {
+// Distinct from a plain status chip: shows a neutral "not recorded yet" state
+// until the superintendent actively picks something, which is the moment a
+// scheduled activity stops being "unreported" for today.
+function ScheduleStatusSelect({ value, onChange }) {
+  const chip = value ? STATUS[value].chip : "bg-gray-50 text-gray-400 border-dashed border-gray-300";
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={`text-[11px] px-2 py-1 rounded-full border outline-none cursor-pointer ${STATUS[value].chip}`}>
+    <select value={value || ""} onChange={(e) => onChange(e.target.value)} className={`text-[11px] px-2 py-1 rounded-full border outline-none cursor-pointer ${chip}`}>
+      <option value="">— Not recorded —</option>
       {DR_STATUS_OPTIONS.map((v) => <option key={v} value={v}>{STATUS[v].label}</option>)}
     </select>
   );
 }
 
 function DailyReportContent() {
-  const [planned, setPlanned] = useState(DR_INITIAL_PLANNED);
+  const logSnapshot = useDailyLogs(); // subscribe so this view re-renders when statuses/notes change
+  const todaysTasks = REAL_SCHEDULE.filter((t) => isTaskActiveToday(t));
+  const urgentTasks = todaysTasks.filter((t) => needsAttention(t));
   const [manpower, setManpower] = useState(DR_INITIAL_MANPOWER);
   const [unplanned, setUnplanned] = useState([{ desc: "Repair column area", zone: "Z02-01", sub: "Concrete Sub", qty: "1 ea", note: "Client requested" }]);
   const [submitted, setSubmitted] = useState(false);
   const [weather, setWeather] = useState("sunny");
 
-  const updateActivity = (id, field, value) => setPlanned((prev) => prev.map((a) => (a.id === id ? { ...a, [field]: value } : a)));
+  function handleFlagClick(task) {
+    const existing = getEntry(task.id).flagNote || "";
+    const text = window.prompt(
+      `"${task.title}" was scheduled for today but hasn't been recorded yet.\n\nWhy? (this note will also show up on the Look-Ahead schedule)`,
+      existing
+    );
+    if (text !== null && text.trim() !== "") addFlagNote(task.id, text.trim());
+  }
+
   const updateManpower = (idx, field, value) => setManpower((prev) => prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
   const addManpower = () => setManpower((prev) => [...prev, { sub: DR_SUBCONTRACTOR_OPTIONS[0], zone: DR_ZONE_OPTIONS[0], manpower: 1, activity: DR_ACTIVITY_OPTIONS[0] }]);
   const removeManpower = (idx) => setManpower((prev) => prev.filter((_, i) => i !== idx));
   const totalManpower = manpower.reduce((sum, r) => sum + (Number(r.manpower) || 0), 0);
   const addUnplanned = () => setUnplanned((prev) => [...prev, { desc: "", zone: "", sub: "", qty: "", note: "" }]);
   const removeUnplanned = (idx) => setUnplanned((prev) => prev.filter((_, i) => i !== idx));
-  const pct = (a) => Math.round((a.actualQty / a.plannedQty) * 100) || 0;
   const WeatherIcon = { sunny: Sun, cloudy: Cloud, rainy: CloudRain }[weather];
 
   return (
     <>
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
-        <div><div className="text-base font-medium text-gray-900">Daily Report</div><div className="text-xs text-gray-500">Wednesday, 15 Jul 2026</div></div>
+        <div><div className="text-base font-medium text-gray-900">Daily Report</div><div className="text-xs text-gray-500">Saturday, 18 Jul 2026</div></div>
         <button onClick={() => setSubmitted(true)} className="text-xs px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
           {submitted ? "Report submitted ✓" : "Submit Report"}
         </button>
@@ -79,28 +94,52 @@ function DailyReportContent() {
           </div>
         </div>
 
+        {urgentTasks.length > 0 && (
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-100 rounded-lg text-xs text-red-700">
+            <Flag size={13} fill="currentColor" />
+            {urgentTasks.length} activit{urgentTasks.length > 1 ? "ies" : "y"} scheduled for today {urgentTasks.length > 1 ? "need" : "needs"} attention — pick a status and/or explain why below.
+          </div>
+        )}
+
         <div className="bg-white border border-gray-200 rounded-lg">
-          <div className="px-4 py-3 border-b border-gray-100 font-medium text-gray-900">Planned Activities ({planned.length})</div>
+          <div className="px-4 py-3 border-b border-gray-100 font-medium text-gray-900">Planned Activities ({todaysTasks.length})</div>
           <table className="w-full text-left">
             <thead><tr className="text-xs text-gray-500 border-b border-gray-100">
-              <th className="px-4 py-2 font-normal">Activity / Zone</th><th className="px-4 py-2 font-normal">Subcontractor</th>
-              <th className="px-4 py-2 font-normal">Planned Qty</th><th className="px-4 py-2 font-normal">Actual Qty</th>
-              <th className="px-4 py-2 font-normal">Status</th><th className="px-4 py-2 font-normal">%</th><th className="px-4 py-2 font-normal">Notes</th>
+              <th className="px-4 py-2 font-normal"></th>
+              <th className="px-4 py-2 font-normal">Activity / Area</th><th className="px-4 py-2 font-normal">Subcontractor</th>
+              <th className="px-4 py-2 font-normal">Status</th><th className="px-4 py-2 font-normal">Report Notes</th>
             </tr></thead>
             <tbody>
-              {planned.map((a) => (
-                <tr key={a.id} className="border-b border-gray-50 last:border-0">
-                  <td className="px-4 py-2.5"><div className="text-gray-900">{a.title}</div><div className="text-xs text-gray-400">{a.zone}</div></td>
-                  <td className="px-4 py-2.5 text-gray-600">{a.sub}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{a.plannedQty} {a.unit}</td>
-                  <td className="px-4 py-2.5"><input type="number" value={a.actualQty} onChange={(e) => updateActivity(a.id, "actualQty", Number(e.target.value))}
-                    className="w-20 border border-gray-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-400" /></td>
-                  <td className="px-4 py-2.5"><DR_StatusSelect value={a.status} onChange={(v) => updateActivity(a.id, "status", v)} /></td>
-                  <td className="px-4 py-2.5 text-gray-600">{pct(a)}%</td>
-                  <td className="px-4 py-2.5"><input value={a.note} onChange={(e) => updateActivity(a.id, "note", e.target.value)} placeholder="—"
-                    className="w-32 border border-gray-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-400 placeholder:text-gray-300" /></td>
-                </tr>
-              ))}
+              {todaysTasks.map((t) => {
+                const entry = getEntry(t.id);
+                const flagState = getFlagState(t);
+                const rowTone = flagState === "explained" ? "bg-amber-50/50" : flagState !== "none" ? "bg-red-50/40" : "";
+                const flagColor = flagState === "explained" ? "text-amber-500 hover:text-amber-700" : "text-red-500 hover:text-red-700";
+                const flagTitle = flagState === "explained"
+                  ? `Explained — ${entry.reportNote || entry.flagNote}`
+                  : flagState === "unexplained"
+                  ? "Status recorded, but no explanation yet. Click to add a note."
+                  : "Not yet recorded today. Click to add a note.";
+                return (
+                  <tr key={t.id} className={`border-b border-gray-50 last:border-0 ${rowTone}`}>
+                    <td className="px-4 py-2.5">
+                      {flagState !== "none" && (
+                        <button onClick={() => handleFlagClick(t)} title={flagTitle} className={flagColor}>
+                          <Flag size={13} fill={flagState === "explained" ? "currentColor" : entry.flagNote ? "currentColor" : "none"} />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5"><div className="text-gray-900">{t.title}</div><div className="text-xs text-gray-400">{t.area} — {t.group}</div></td>
+                    <td className="px-4 py-2.5 text-gray-600">{t.subcontractor}</td>
+                    <td className="px-4 py-2.5"><ScheduleStatusSelect value={entry.status} onChange={(v) => setTaskStatus(t.id, v)} /></td>
+                    <td className="px-4 py-2.5"><input value={entry.reportNote || ""} onChange={(e) => setTaskField(t.id, "reportNote", e.target.value)} placeholder="—"
+                      className="w-48 border border-gray-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-400 placeholder:text-gray-300" /></td>
+                  </tr>
+                );
+              })}
+              {todaysTasks.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-xs">No activities scheduled for today.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
