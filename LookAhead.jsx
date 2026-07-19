@@ -125,6 +125,23 @@ function LookAheadContent() {
 
   const windowLabel = !isFull ? `${offsetToLabel(windowStart)} – ${offsetToLabel(windowStart + rangeDays - 1)}` : "";
 
+  function handleExport() {
+    const headers = ["Area", "Group", "Task", "Subcontractor", "Start", "End", "Status", "Notes"];
+    const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = listData.map((t) => [t.area, t.group, t.title, t.subcontractor, t.start, t.end, STATUS[t.status].label, t.notes].map(escape).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const suffix = isFull ? "full-schedule" : `window-${offsetToLabel(windowStart).replace(" ", "-")}`;
+    a.href = url;
+    a.download = `omsf-look-ahead-${suffix}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
@@ -143,7 +160,7 @@ function LookAheadContent() {
             <option value="all">All subcontractors</option>
             {subcontractors.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export</button>
+          <button onClick={handleExport} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export</button>
         </div>
       </div>
 
