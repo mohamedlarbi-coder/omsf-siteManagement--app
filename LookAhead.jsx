@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from "react";
 import { Download, ChevronLeft, ChevronRight, Flag } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE, PROJECT_START, TODAY_OFFSET } from "./schedule.js";
-import { useDailyLogs, getFlagState, needsAttention, addFlagNote, getEntry } from "./dailyLogStore.js";
+import { useDailyLogs, getFlagState, needsAttention, addFlagNote, getEntry, getAllCustomActivities } from "./dailyLogStore.js";
 
 // =============================================================================
 // MODULE 4 — Three-Week / Multi-Week Look-Ahead
@@ -87,14 +87,19 @@ function LookAheadContent() {
   // starts on a clean week boundary rather than mid-week on "today".
   const [windowStart, setWindowStart] = useState(TODAY_OFFSET - (TODAY_OFFSET % 7));
 
-  const areas = useMemo(() => [...new Set(REAL_SCHEDULE.map((t) => t.area))].sort(), []);
-  const subcontractors = useMemo(() => [...new Set(REAL_SCHEDULE.map((t) => t.subcontractor))].sort(), []);
+  // Ad-hoc activities added from the Daily Report (e.g. maintenance, a
+  // client walk-through) get merged in here so they show up permanently in
+  // Look-Ahead too, not just on the one day they were typed into.
+  const fullSchedule = useMemo(() => [...REAL_SCHEDULE, ...getAllCustomActivities()], [logSnapshot]);
+
+  const areas = useMemo(() => [...new Set(fullSchedule.map((t) => t.area))].sort(), [fullSchedule]);
+  const subcontractors = useMemo(() => [...new Set(fullSchedule.map((t) => t.subcontractor))].sort(), [fullSchedule]);
 
   const byArea = useMemo(() => {
-    let src = filterArea === "all" ? REAL_SCHEDULE : REAL_SCHEDULE.filter((t) => t.area === filterArea);
+    let src = filterArea === "all" ? fullSchedule : fullSchedule.filter((t) => t.area === filterArea);
     if (filterSub !== "all") src = src.filter((t) => t.subcontractor === filterSub);
     return src;
-  }, [filterArea, filterSub]);
+  }, [fullSchedule, filterArea, filterSub]);
 
   const rangeStart = isFull ? 0 : windowStart;
   const rangeDays = isFull ? TOTAL_DAYS : activeWindow.days;
@@ -126,7 +131,7 @@ function LookAheadContent() {
   // Flags are based on the FULL schedule (not just the filtered/visible
   // slice) so the count is always accurate regardless of which window or
   // area filter happens to be selected.
-  const todaysFlags = useMemo(() => REAL_SCHEDULE.filter((t) => needsAttention(t)), [logSnapshot]);
+  const todaysFlags = useMemo(() => fullSchedule.filter((t) => needsAttention(t)), [fullSchedule]);
 
   const windowLabel = !isFull ? `${offsetToLabel(windowStart)} – ${offsetToLabel(windowStart + rangeDays - 1)}` : "";
 
