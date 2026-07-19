@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
-import { FileText, ClipboardCheck, FolderOpen, Search, Layers, Download, Building2, Wrench, Zap, HardHat, Megaphone } from "lucide-react";
+import { FileText, ClipboardCheck, FolderOpen, Search, Layers, Download, Building2, Wrench, Zap, HardHat, Megaphone, ClipboardList } from "lucide-react";
+import { useGeneratedDocs } from "./documentsStore.js";
 
 // =============================================================================
 // MODULE 5 — Documents (drawings organized by discipline)
@@ -14,6 +15,7 @@ const DOC_CATEGORIES = [
   { key: "field_directive", label: "Field Directives", icon: Megaphone },
   { key: "shop_drawing", label: "Shop Drawings", icon: FileText },
   { key: "method_statement", label: "Method Statements", icon: ClipboardCheck },
+  { key: "daily_report", label: "Daily Reports", icon: ClipboardList },
 ];
 
 const DOCUMENTS = [
@@ -29,14 +31,25 @@ const DOCUMENTS = [
 ];
 
 function DocumentsContent() {
+  const generatedDocs = useGeneratedDocs();
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
 
-  const filtered = useMemo(() => DOCUMENTS.filter((d) => {
+  // Generated PDFs (Daily Report exports) get shaped like a regular document
+  // row so they sit in the same table/category list as everything else.
+  const allDocuments = useMemo(() => [
+    ...generatedDocs.map((g) => ({
+      id: g.id, title: g.title, category: g.category, number: "—",
+      revision: "Generated", date: g.date, uploadedBy: g.uploadedBy, url: g.url,
+    })),
+    ...DOCUMENTS,
+  ], [generatedDocs]);
+
+  const filtered = useMemo(() => allDocuments.filter((d) => {
     const matchesCat = category === "all" || d.category === category;
     const matchesQuery = d.title.toLowerCase().includes(query.toLowerCase()) || d.number.toLowerCase().includes(query.toLowerCase());
     return matchesCat && matchesQuery;
-  }), [category, query]);
+  }), [allDocuments, category, query]);
 
   return (
     <>
@@ -51,7 +64,7 @@ function DocumentsContent() {
       <div className="flex-1 flex overflow-hidden">
         <div className="w-56 border-r border-gray-200 bg-white overflow-y-auto shrink-0 py-2">
           {DOC_CATEGORIES.map((c) => {
-            const count = c.key === "all" ? DOCUMENTS.length : DOCUMENTS.filter((d) => d.category === c.key).length;
+            const count = c.key === "all" ? allDocuments.length : allDocuments.filter((d) => d.category === c.key).length;
             return (
               <div key={c.key} onClick={() => setCategory(c.key)}
                 className={`flex items-center justify-between gap-2 px-4 py-2 cursor-pointer text-xs ${category === c.key ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
@@ -79,7 +92,13 @@ function DocumentsContent() {
                     <td className="px-4 py-2.5 text-gray-600">{d.revision}</td>
                     <td className="px-4 py-2.5 text-gray-600">{d.date}</td>
                     <td className="px-4 py-2.5 text-gray-600">{d.uploadedBy}</td>
-                    <td className="px-4 py-2.5 text-gray-300"><Download size={15} /></td>
+                    <td className="px-4 py-2.5">
+                      {d.url ? (
+                        <a href={d.url} download={d.title} className="text-blue-500 hover:text-blue-700" title="Download"><Download size={15} /></a>
+                      ) : (
+                        <span className="text-gray-300"><Download size={15} /></span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
