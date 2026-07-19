@@ -5,6 +5,7 @@ import logoIcon from "./logo-icon.png";
 export default function Login({ onSignedIn }) {
   const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [name, setName] = useState("");
+  const [position, setPosition] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,7 +26,7 @@ export default function Login({ onSignedIn }) {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { full_name: name } },
+          options: { data: { full_name: name, position } },
         });
         if (signUpError) throw signUpError;
         if (data.session) {
@@ -63,6 +64,22 @@ export default function Login({ onSignedIn }) {
               <label className="text-xs text-gray-500 mb-1 block">Full name</label>
               <input value={name} onChange={(e) => setName(e.target.value)} required
                 className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Mohamed Larbi" />
+            </div>
+          )}
+          {mode === "signup" && (
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Position</label>
+              <input value={position} onChange={(e) => setPosition(e.target.value)} required list="position-options"
+                className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="e.g. Senior Superintendent" />
+              <datalist id="position-options">
+                <option value="Senior Superintendent" />
+                <option value="Superintendent" />
+                <option value="General Superintendent" />
+                <option value="Project Manager" />
+                <option value="Foreperson" />
+                <option value="Subcontractor" />
+                <option value="Quality / Safety" />
+              </datalist>
             </div>
           )}
           <div>
