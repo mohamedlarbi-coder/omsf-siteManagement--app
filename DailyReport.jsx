@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag } from "lucide-react";
+import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE } from "./schedule.js";
 import { useDailyLogs, isTaskActiveToday, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry } from "./dailyLogStore.js";
@@ -12,7 +12,15 @@ import { useDailyLogs, isTaskActiveToday, getFlagState, needsAttention, setTaskS
 // variance flagging work: an activity scheduled for today that hasn't had a
 // status recorded here shows up flagged in both this module and Look-Ahead.
 // =============================================================================
-const DR_STATUS_OPTIONS = ["not_started","in_progress","completed","partially_completed","delayed","cancelled"];
+const REASON_CHIPS = [
+  { label: "Material not delivered", status: "delayed" },
+  { label: "Subcontractor no-show", status: "delayed" },
+  { label: "Weather", status: "delayed" },
+  { label: "Equipment issue", status: "delayed" },
+  { label: "Access blocked", status: "delayed" },
+  { label: "Cancelled", status: "cancelled" },
+  { label: "Other…", status: "delayed" },
+];
 const DR_SUBCONTRACTOR_OPTIONS = ["Carpentry Sub","Steel Fixer Sub","Concrete Sub","MEP Sub","Masonry Sub","Waterproofing Sub","Electrical Sub","Excavation Sub"];
 const DR_ZONE_OPTIONS = ["Z02-01","Z02-02","Z02-03","Z02-04"];
 const DR_ACTIVITY_OPTIONS = ["Formwork Walls","Rebar Installation","Concrete Walls","MEP Rough-In","Slab Formwork","Slab Rebar","Concrete Slab","Block Work","Waterproofing"];
@@ -22,19 +30,6 @@ const DR_INITIAL_MANPOWER = [
   { sub: "Carpentry Sub", zone: "Z02-03", manpower: 5, activity: "Slab Formwork" },
 ];
 
-// Distinct from a plain status chip: shows a neutral "not recorded yet" state
-// until the superintendent actively picks something, which is the moment a
-// scheduled activity stops being "unreported" for today.
-function ScheduleStatusSelect({ value, onChange }) {
-  const chip = value ? STATUS[value].chip : "bg-gray-50 text-gray-400 border-dashed border-gray-300";
-  return (
-    <select value={value || ""} onChange={(e) => onChange(e.target.value)} className={`text-[11px] px-2 py-1 rounded-full border outline-none cursor-pointer ${chip}`}>
-      <option value="">— Not recorded —</option>
-      {DR_STATUS_OPTIONS.map((v) => <option key={v} value={v}>{STATUS[v].label}</option>)}
-    </select>
-  );
-}
-
 function DailyReportContent() {
   const logSnapshot = useDailyLogs(); // subscribe so this view re-renders when statuses/notes change
   const todaysTasks = REAL_SCHEDULE.filter((t) => isTaskActiveToday(t));
@@ -43,6 +38,31 @@ function DailyReportContent() {
   const [unplanned, setUnplanned] = useState([{ desc: "Repair column area", zone: "Z02-01", sub: "Concrete Sub", qty: "1 ea", note: "Client requested" }]);
   const [submitted, setSubmitted] = useState(false);
   const [weather, setWeather] = useState("sunny");
+  // Which task's row currently has the "why not?" reason chips open — only
+  // one at a time, closed again once a reason is picked.
+  const [askingFor, setAskingFor] = useState(null);
+
+  function handleYes(task) {
+    setTaskStatus(task.id, "completed");
+    setAskingFor(null);
+  }
+
+  function handleNo(task) {
+    setAskingFor(task.id);
+  }
+
+  function handleReasonChip(task, chip) {
+    if (chip.label === "Other…") {
+      const text = window.prompt(`Quick answer — why didn't "${task.title}" happen today?`, "");
+      if (text === null || text.trim() === "") return; // cancelled, leave it open
+      setTaskField(task.id, "reportNote", text.trim());
+      setTaskStatus(task.id, chip.status);
+    } else {
+      setTaskField(task.id, "reportNote", chip.label);
+      setTaskStatus(task.id, chip.status);
+    }
+    setAskingFor(null);
+  }
 
   function handleFlagClick(task) {
     const existing = getEntry(task.id).flagNote || "";
@@ -107,7 +127,7 @@ function DailyReportContent() {
             <thead><tr className="text-xs text-gray-500 border-b border-gray-100">
               <th className="px-4 py-2 font-normal"></th>
               <th className="px-4 py-2 font-normal">Activity / Area</th><th className="px-4 py-2 font-normal">Subcontractor</th>
-              <th className="px-4 py-2 font-normal">Status</th><th className="px-4 py-2 font-normal">Report Notes</th>
+              <th className="px-4 py-2 font-normal">Did this happen today?</th>
             </tr></thead>
             <tbody>
               {todaysTasks.map((t) => {
@@ -120,6 +140,8 @@ function DailyReportContent() {
                   : flagState === "unexplained"
                   ? "Status recorded, but no explanation yet. Click to add a note."
                   : "Not yet recorded today. Click to add a note.";
+                const answeredYes = entry.status === "completed" || entry.status === "in_progress";
+                const answeredNo = entry.status && !answeredYes;
                 return (
                   <tr key={t.id} className={`border-b border-gray-50 last:border-0 ${rowTone}`}>
                     <td className="px-4 py-2.5">
@@ -131,14 +153,41 @@ function DailyReportContent() {
                     </td>
                     <td className="px-4 py-2.5"><div className="text-gray-900">{t.title}</div><div className="text-xs text-gray-400">{t.area} — {t.group}</div></td>
                     <td className="px-4 py-2.5 text-gray-600">{t.subcontractor}</td>
-                    <td className="px-4 py-2.5"><ScheduleStatusSelect value={entry.status} onChange={(v) => setTaskStatus(t.id, v)} /></td>
-                    <td className="px-4 py-2.5"><input value={entry.reportNote || ""} onChange={(e) => setTaskField(t.id, "reportNote", e.target.value)} placeholder="—"
-                      className="w-48 border border-gray-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-400 placeholder:text-gray-300" /></td>
+                    <td className="px-4 py-2.5">
+                      {askingFor === t.id ? (
+                        <div className="flex flex-wrap gap-1.5 max-w-md">
+                          {REASON_CHIPS.map((chip) => (
+                            <button key={chip.label} onClick={() => handleReasonChip(t, chip)}
+                              className="text-[11px] px-2 py-1 rounded-full border border-gray-200 text-gray-600 hover:bg-gray-50 whitespace-nowrap">
+                              {chip.label}
+                            </button>
+                          ))}
+                          <button onClick={() => setAskingFor(null)} className="text-[11px] px-2 py-1 text-gray-400 hover:text-gray-600">Cancel</button>
+                        </div>
+                      ) : answeredYes ? (
+                        <button onClick={() => handleNo(t)} className="flex items-center gap-1.5 text-xs text-emerald-700">
+                          <CheckCircle2 size={15} className="text-emerald-500" /> Yes, happened
+                        </button>
+                      ) : answeredNo ? (
+                        <button onClick={() => setAskingFor(t.id)} className="flex items-center gap-1.5 text-xs text-gray-700">
+                          <XCircle size={15} className="text-red-400" /> No — {entry.reportNote || STATUS[entry.status].label}
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => handleYes(t)} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                            <CheckCircle2 size={13} /> Yes
+                          </button>
+                          <button onClick={() => handleNo(t)} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-red-200 text-red-600 hover:bg-red-50">
+                            <XCircle size={13} /> No
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {todaysTasks.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-xs">No activities scheduled for today.</td></tr>
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400 text-xs">No activities scheduled for today.</td></tr>
               )}
             </tbody>
           </table>
