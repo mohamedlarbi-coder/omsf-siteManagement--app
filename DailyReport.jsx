@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE, TODAY_OFFSET, offsetToFullLabel } from "./schedule.js";
-import { useDailyLogs, isTaskActiveOnOffset, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry } from "./dailyLogStore.js";
+import { useDailyLogs, isTaskActiveOnOffset, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry, addCustomActivity, removeCustomActivity, getCustomActivities } from "./dailyLogStore.js";
 
 // =============================================================================
 // MODULE 3 — Daily Report
@@ -33,8 +33,19 @@ const DR_INITIAL_MANPOWER = [
 function DailyReportContent() {
   const logSnapshot = useDailyLogs(); // subscribe so this view re-renders when statuses/notes change
   const [selectedOffset, setSelectedOffset] = useState(TODAY_OFFSET);
-  const todaysTasks = REAL_SCHEDULE.filter((t) => isTaskActiveOnOffset(t, selectedOffset));
+  const todaysTasks = [
+    ...REAL_SCHEDULE.filter((t) => isTaskActiveOnOffset(t, selectedOffset)),
+    ...getCustomActivities(selectedOffset),
+  ];
   const urgentTasks = todaysTasks.filter((t) => needsAttention(t, selectedOffset));
+  const [newActivityTitle, setNewActivityTitle] = useState("");
+
+  function handleAddActivity() {
+    const title = newActivityTitle.trim();
+    if (!title) return;
+    addCustomActivity(selectedOffset, title);
+    setNewActivityTitle("");
+  }
   const [manpower, setManpower] = useState(DR_INITIAL_MANPOWER);
   const [unplanned, setUnplanned] = useState([{ desc: "Repair column area", zone: "Z02-01", sub: "Concrete Sub", qty: "1 ea", note: "Client requested" }]);
   const [submitted, setSubmitted] = useState(false);
@@ -153,6 +164,7 @@ function DailyReportContent() {
                   : "Not yet recorded today. Click to add a note.";
                 const answeredYes = entry.status === "completed" || entry.status === "in_progress";
                 const answeredNo = entry.status && !answeredYes;
+                const isCustom = t.id.startsWith("custom-");
                 return (
                   <tr key={t.id} className={`border-b border-gray-50 last:border-0 ${rowTone}`}>
                     <td className="px-4 py-2.5">
@@ -163,7 +175,16 @@ function DailyReportContent() {
                       )}
                     </td>
                     <td className="px-4 py-2.5"><div className="text-gray-900">{t.title}</div><div className="text-xs text-gray-400">{t.area} — {t.group}</div></td>
-                    <td className="px-4 py-2.5 text-gray-600">{t.subcontractor}</td>
+                    <td className="px-4 py-2.5 text-gray-600">
+                      <div className="flex items-center gap-1.5">
+                        {t.subcontractor}
+                        {isCustom && (
+                          <button onClick={() => removeCustomActivity(t.id)} title="Remove this ad-hoc activity" className="text-gray-300 hover:text-red-500">
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-2.5">
                       {askingFor === t.id ? (
                         <div className="flex flex-wrap gap-1.5 max-w-md">
@@ -202,6 +223,17 @@ function DailyReportContent() {
               )}
             </tbody>
           </table>
+          <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-100">
+            <Plus size={14} className="text-gray-400 shrink-0" />
+            <input
+              value={newActivityTitle}
+              onChange={(e) => setNewActivityTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddActivity()}
+              placeholder="Anything else to add? e.g. crane maintenance, client walk-through…"
+              className="flex-1 text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-blue-400 placeholder:text-gray-300"
+            />
+            <button onClick={handleAddActivity} className="text-xs px-3 py-1.5 rounded-md bg-gray-900 text-white hover:bg-gray-800">Add</button>
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg">
