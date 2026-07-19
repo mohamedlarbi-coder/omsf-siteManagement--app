@@ -1,8 +1,9 @@
-import React, { useState } from "react";
-import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { Users, Camera, Plus, Trash2, Cloud, Sun, CloudRain, Flag, CheckCircle2, XCircle, ChevronLeft, ChevronRight, FileDown } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE, TODAY_OFFSET, offsetToFullLabel } from "./schedule.js";
 import { useDailyLogs, isTaskActiveOnOffset, getFlagState, needsAttention, setTaskStatus, setTaskField, addFlagNote, getEntry, addCustomActivity, removeCustomActivity, getCustomActivities } from "./dailyLogStore.js";
+import { addGeneratedDoc } from "./documentsStore.js";
 
 // =============================================================================
 // MODULE 3 — Daily Report
@@ -50,9 +51,70 @@ function DailyReportContent() {
   const [unplanned, setUnplanned] = useState([{ desc: "Repair column area", zone: "Z02-01", sub: "Concrete Sub", qty: "1 ea", note: "Client requested" }]);
   const [submitted, setSubmitted] = useState(false);
   const [weather, setWeather] = useState("sunny");
+  const [exporting, setExporting] = useState(false);
+  const contentRef = useRef(null);
   // Which task's row currently has the "why not?" reason chips open — only
   // one at a time, closed again once a reason is picked.
   const [askingFor, setAskingFor] = useState(null);
+
+  async function handleExportPdf() {
+    const node = contentRef.current;
+    if (!node) return;
+    setExporting(true);
+    try {
+      // Loaded on demand, same approach as the Look-Ahead PDF export — keeps
+      // these libraries out of the initial page load.
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+      const canvas = await html2canvas(node, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const margin = 10;
+      const pageWidth = pdf.internal.pageSize.getWidth() - margin * 2;
+      const pageHeight = pdf.internal.pageSize.getHeight() - margin * 2;
+
+      const dateLabel = offsetToFullLabel(selectedOffset);
+      pdf.setFontSize(13);
+      pdf.text(`OMSF Daily Report — ${dateLabel}`, margin, margin + 4);
+      pdf.setFontSize(8);
+      pdf.setTextColor(120);
+      pdf.text(`Superintendent: Mohamed · Exported ${new Date().toLocaleString("en-US")}`, margin, margin + 9);
+
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const contentTop = margin + 13;
+      const usablePerPage = pageHeight - 13;
+      const totalPages = Math.max(1, Math.ceil(imgHeight / usablePerPage));
+
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) pdf.addPage();
+        const sliceCanvas = document.createElement("canvas");
+        const pxPerMm = canvas.width / imgWidth;
+        const sliceHeightPx = Math.min(usablePerPage * pxPerMm, canvas.height - page * usablePerPage * pxPerMm);
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        const ctx = sliceCanvas.getContext("2d");
+        ctx.drawImage(canvas, 0, page * usablePerPage * pxPerMm, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+        const sliceData = sliceCanvas.toDataURL("image/png");
+        const sliceHeightMm = (sliceHeightPx * imgWidth) / canvas.width;
+        pdf.addImage(sliceData, "PNG", margin, page === 0 ? contentTop : margin, imgWidth, sliceHeightMm);
+      }
+
+      const fileName = `Daily Report — ${dateLabel}.pdf`;
+      const blob = pdf.output("blob");
+      const url = URL.createObjectURL(blob);
+
+      // Saves it into the Documents module (in-memory for this session —
+      // once Supabase Storage is wired in, this is where the real upload goes).
+      addGeneratedDoc({ title: fileName, category: "daily_report", date: dateLabel, url });
+
+      pdf.save(fileName);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function handleYes(task) {
     setTaskStatus(task.id, "completed", selectedOffset);
@@ -107,12 +169,18 @@ function DailyReportContent() {
             )}
           </div>
         </div>
-        <button onClick={() => setSubmitted(true)} className="text-xs px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
-          {submitted ? "Report submitted ✓" : "Submit Report"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExportPdf} disabled={exporting} className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            <FileDown size={13} /> {exporting ? "Exporting…" : "Export PDF"}
+          </button>
+          <button onClick={() => setSubmitted(true)} className="text-xs px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
+            {submitted ? "Report submitted ✓" : "Submit Report"}
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      <div className="flex-1 overflow-y-auto p-6">
+        <div ref={contentRef} className="space-y-5 bg-white">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="font-medium text-gray-900 mb-3">General Information</div>
           <div className="grid grid-cols-4 gap-4 text-xs">
@@ -300,6 +368,7 @@ function DailyReportContent() {
             {[1,2,3].map((i) => <div key={i} className="w-24 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-300"><Camera size={18} /></div>)}
             <div className="w-24 h-20 border-2 border-dashed border-gray-200 rounded-md flex items-center justify-center text-gray-400 cursor-pointer hover:border-blue-300 hover:text-blue-400"><Plus size={18} /></div>
           </div>
+        </div>
         </div>
       </div>
     </>
