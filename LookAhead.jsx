@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { Download, ChevronLeft, ChevronRight } from "lucide-react";
 import { STATUS } from "./status.jsx";
 import { REAL_SCHEDULE } from "./schedule.js";
@@ -125,21 +125,62 @@ function LookAheadContent() {
 
   const windowLabel = !isFull ? `${offsetToLabel(windowStart)} – ${offsetToLabel(windowStart + rangeDays - 1)}` : "";
 
-  function handleExport() {
-    const headers = ["Area", "Group", "Task", "Subcontractor", "Start", "End", "Status", "Notes"];
-    const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const rows = listData.map((t) => [t.area, t.group, t.title, t.subcontractor, t.start, t.end, STATUS[t.status].label, t.notes].map(escape).join(","));
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+  const contentRef = useRef(null);
+
+  async function handleExportPdf() {
+    const node = contentRef.current;
+    if (!node) return;
+    // Loaded on demand (not in the main bundle) since PDF export is an
+    // occasional action, not something every page load needs.
+    const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+      import("jspdf"),
+      import("html2canvas"),
+    ]);
+
+    const canvas = await html2canvas(node, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const margin = 10;
+    const pageWidth = pdf.internal.pageSize.getWidth() - margin * 2;
+    const pageHeight = pdf.internal.pageSize.getHeight() - margin * 2;
+
+    const title = !isFull
+      ? `OMSF Look-Ahead — ${activeWindow.label} (${windowLabel}, 2026)`
+      : "OMSF Look-Ahead — Full Schedule (Jul 6 – Sep 11, 2026)";
+    const subtitle = `Area: ${filterArea === "all" ? "All" : filterArea} · Subcontractor: ${filterSub === "all" ? "All" : filterSub} · Exported ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}`;
+
+    pdf.setFontSize(13);
+    pdf.text(title, margin, margin + 4);
+    pdf.setFontSize(8);
+    pdf.setTextColor(120);
+    pdf.text(subtitle, margin, margin + 9);
+
+    // Fit the captured image to the page width, then slice it across as
+    // many pages as needed if the content is taller than one page.
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const contentTop = margin + 13;
+    const usablePerPage = pageHeight - 13;
+    const totalPages = Math.max(1, Math.ceil(imgHeight / usablePerPage));
+
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) {
+        pdf.addPage();
+      }
+      const sliceCanvas = document.createElement("canvas");
+      const pxPerMm = canvas.width / imgWidth;
+      const sliceHeightPx = Math.min(usablePerPage * pxPerMm, canvas.height - page * usablePerPage * pxPerMm);
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = sliceHeightPx;
+      const ctx = sliceCanvas.getContext("2d");
+      ctx.drawImage(canvas, 0, page * usablePerPage * pxPerMm, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+      const sliceData = sliceCanvas.toDataURL("image/png");
+      const sliceHeightMm = (sliceHeightPx * imgWidth) / canvas.width;
+      pdf.addImage(sliceData, "PNG", margin, page === 0 ? contentTop : margin, imgWidth, sliceHeightMm);
+    }
+
     const suffix = isFull ? "full-schedule" : `window-${offsetToLabel(windowStart).replace(" ", "-")}`;
-    a.href = url;
-    a.download = `omsf-look-ahead-${suffix}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    pdf.save(`omsf-look-ahead-${suffix}.pdf`);
   }
 
   return (
@@ -160,7 +201,7 @@ function LookAheadContent() {
             <option value="all">All subcontractors</option>
             {subcontractors.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <button onClick={handleExport} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export</button>
+          <button onClick={handleExportPdf} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"><Download size={13} /> Export PDF</button>
         </div>
       </div>
 
@@ -199,6 +240,7 @@ function LookAheadContent() {
       </div>
 
       <div className="flex-1 overflow-auto">
+        <div ref={contentRef} className="bg-white">
         {tab === "Gantt" ? (
           <div style={isResponsive ? { minWidth: "100%" } : { minWidth: rangeDays * DAY_WIDTH + 260 }}>
             {/* Timeline header */}
@@ -312,6 +354,7 @@ function LookAheadContent() {
             </tbody>
           </table>
         )}
+        </div>
       </div>
 
       <div className="flex items-center gap-4 px-6 py-2.5 border-t border-gray-200 bg-white shrink-0">
