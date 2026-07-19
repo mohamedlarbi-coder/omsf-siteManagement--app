@@ -148,3 +148,10 @@ export function removeCustomActivity(id) {
 export function getCustomActivities(offset = TODAY_OFFSET) {
   return customActivities.filter((c) => c.offset === offset);
 }
+
+// Every ad-hoc activity ever added, across all days — this is what lets
+// Look-Ahead show them too (as a permanent record, not just visible on the
+// one Daily Report they were typed into).
+export function getAllCustomActivities() {
+  return customActivities;
+}
