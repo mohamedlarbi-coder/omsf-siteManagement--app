@@ -15,12 +15,15 @@ import sitePlan from "./site-plan.png";
 // connected-component analysis on the source PDF).
 // =============================================================================
 
+// Zone polygons are pixel coordinates in the rotated 1520x1000 image
+// (rotated 90° left/counter-clockwise from the original CAD export so it
+// reads better in a wide screen layout).
 const ZONES = [
-  { id: "Area 1", points: "341,966 537,966 537,1280 341,1280" },
-  { id: "Area 2", points: "335,225 541,225 541,971 335,971" },
-  { id: "Area 3", points: "529,226 770,226 770,793 529,793" },
-  { id: "Area 4", points: "528,782 702,782 702,1284 528,1284" },
-  { id: "Area 5", points: "246,591 342,591 342,1153 246,1153" },
+  { id: "Area 1", points: "966,659 966,463 1280,463 1280,659" },
+  { id: "Area 2", points: "225,665 225,459 971,459 971,665" },
+  { id: "Area 3", points: "226,471 226,230 793,230 793,471" },
+  { id: "Area 4", points: "782,472 782,298 1284,298 1284,472" },
+  { id: "Area 5", points: "591,754 591,658 1153,658 1153,754" },
 ];
 
 // A handful of evenly-spaced days around today, so the strip is relevant
@@ -95,7 +98,7 @@ export default function VisualSchedule() {
         <div className="flex-1 p-6 flex flex-col overflow-auto">
           <div className="relative inline-block mx-auto">
             <img src={sitePlan} alt="OMSF Maintenance Building floor plan" className="max-w-full h-auto select-none" draggable={false} />
-            <svg viewBox="0 0 1000 1520" className="absolute inset-0 w-full h-full">
+            <svg viewBox="0 0 1520 1000" className="absolute inset-0 w-full h-full">
               {ZONES.map((zone) => {
                 const data = zoneData[zone.id];
                 const style = STATUS[data.key];
